@@ -1,3 +1,5 @@
+import time
+
 __author__ = "Bojan Potočnik"
 
 import ctypes
@@ -6,31 +8,40 @@ from collections.abc import Iterator
 from typing import Union, Type, Optional
 
 # noinspection PyPackageRequirements
-from pylink import JLink
+from pylink import JLink, JLinkInterfaces, JLinkRTTException
 
 
 class SeggerRTTListener(Iterator):
     def __init__(self,
                  device_name: Optional[str] = None,
-                 speed: Union[int, str] = 'adaptive',
-                 auto_update_fw: bool = False):
+                 speed: Union[int, str] = 'auto',  # JLink.MAX_JTAG_SPEED,
+                 interface: JLinkInterfaces = JLinkInterfaces.SWD,
+                 auto_update_fw: bool = False,
+                 print_info: bool = True):
         """
         Initialize the RTT viewer.
 
         :param device_name:    Name of the target device (chip). If not provided and there is no saved device from
                                any previous run, stdin will be used to ask for device name.
         :param speed:          See :func:`pylink.jlink.JLink.connect`.
+        :param interface:      Communication interface to use.
         :param auto_update_fw: Whether the emulator FW shall be automatically updated if the newer
                                version is available. If set to False, newer FW is ignored as dialogs
                                are suppressed and this information is hidden.
+        :param print_info:     Whether to print various information (progress, device info, ...).
         """
-        self._jlink = JLink()
         self._jlink_device_name = device_name
         self._jlink_speed = speed
+        # noinspection PyTypeChecker
+        self._jlink_interface = int(interface)
 
+        self._jlink = JLink()
         self._jlink.disable_dialog_boxes()
         # disable_dialog_boxes enables SilentUpdateFW.
         self._jlink.exec_command("EnableAutoUpdateFW" if auto_update_fw else "DisableAutoUpdateFW")
+
+        self._print_fn = print if print_info else (lambda *args, **kwargs: None)
+        self._jlink_rtt_num_rx_buffers: int = 0
 
     def _validate_device_name(self, device_name: str) -> bool:
         return device_name.lower() in (self._jlink.supported_device(i).name.lower()
@@ -48,7 +59,7 @@ class SeggerRTTListener(Iterator):
                 device_name = None
 
             if device_name and not self._validate_device_name(device_name):
-                print(f"Last used device name '{device_name}' is not valid.")
+                self._print_fn(f"Last used device name '{device_name}' is not valid.")
                 device_name = None
 
             if not device_name:
@@ -97,40 +108,76 @@ class SeggerRTTListener(Iterator):
 
     def __enter__(self):
         self._jlink.open()
-        print(f"Using JLinkARM.dll v{self._jlink.version} on"
-              f" J-Link v{self._jlink.hardware_version} running FW {self._jlink.firmware_version}"
-              f"{' (outdated)' if self._jlink.firmware_outdated else ''}")
+        self._print_fn(f"Using JLinkARM.dll v{self._jlink.version} on"
+                       f" J-Link v{self._jlink.hardware_version} running FW {self._jlink.firmware_version}"
+                       f"{' (outdated)' if self._jlink.firmware_outdated else ''}")
 
         chip_name = self._get_device_name()
         if not chip_name:
             raise ValueError("No device (chip) name provided")
 
-        print(f"Connecting to {chip_name}"
-              f" using {self._jlink_speed}{' kHz' if type(self._jlink_speed) is int else ''} speed"
-              f" at {self._jlink.hardware_status.voltage} mV...")
+        self._print_fn(f"Connecting to {chip_name}"
+                       f" using {self._jlink_speed}{' kHz' if type(self._jlink_speed) is int else ''} clock speed"
+                       f" at {self._jlink.hardware_status.voltage} mV...")
 
+        # Set SWD as the interface
+        self._jlink.set_tif(self._jlink_interface)
         self._jlink.connect(chip_name=chip_name, speed=self._jlink_speed, verbose=True)
+        self._jlink.rtt_start()
+        # RTT must initialize with the target before retrieving more information.
+        for _ in range(20):
+            try:
+                self._jlink_rtt_num_rx_buffers = self._jlink.rtt_get_num_up_buffers()
+                break
+            except JLinkRTTException as e:
+                if "The RTT Control Block has not yet been found" in str(e):
+                    time.sleep(0.1)
+                else:
+                    raise e
+
+        # noinspection PyProtectedMember
+        endian = int(self._jlink._device.EndianMode[0])
+        endian = {0: "Little", 1: "Big"}.get(endian, f"Unknown ({endian})")
+        self._print_fn(f"RTT (using {self._jlink_rtt_num_rx_buffers} RX buffers at {self._jlink.speed} kHz)"
+                       f" connected to {endian}-Endian {self._jlink.core_name()}"
+                       f" running at {self._jlink.cpu_speed() / 1e6:.3f} MHz")
         return self
 
     def read_blocking(self) -> str:
-        raise NotImplementedError()
+        while True:
+            # Try reading all buffers until some data is available
+            for i in range(self._jlink_rtt_num_rx_buffers):
+                rx_data = self._jlink.rtt_read(i, self._jlink.MAX_BUF_SIZE)
+                if rx_data:
+                    return bytes(rx_data).decode('utf-8')
+            time.sleep(0.01)
 
     def __next__(self) -> Union[str, Type[StopIteration]]:
         """Read line, blocking mode"""
-        if self.connected:
-            self._jlink.close()
-            return "TODO: Not implemented"
-        # if not self.connected:
-        #     return StopIteration
+        if not self.connected:
+            return StopIteration
         # Wait for new line indefinitely, remove newline characters at the end and convert it to string
-        # return self.telnet.read_until("\r\n".encode('ascii'))[:-2].decode()
+        rx_data = self.read_blocking()
+        for line in rx_data.split("\n"):
+            # Sometimes lines end with "\r\n", sometimes with "\n" only.
+            return line.rstrip()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._jlink.close()
+        try:
+            self._jlink.rtt_stop()
+            self._jlink.close()
+        except JLinkRTTException:
+            pass
 
     @property
     def connected(self) -> bool:
         return self._jlink.target_connected()
+
+
+def main() -> None:
+    with SeggerRTTListener() as listener:
+        for line in listener:
+            print(line)
 
 
 if __name__ == '__main__':
@@ -142,6 +189,4 @@ if __name__ == '__main__':
         kernel32 = ctypes.windll.kernel32
         kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 0x01 | 0x02 | 0x04)
 
-    with SeggerRTTListener() as listener:
-        for line in listener:
-            print(line)
+    main()
