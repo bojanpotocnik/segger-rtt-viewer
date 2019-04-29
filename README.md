@@ -5,7 +5,12 @@
 SEGGER already provides [J-Link RTT Viewer](https://www.segger.com/products/debug-probes/j-link/technology/about-real-time-transfer/#j-link-rtt-viewer) tool for viewing the RTT output, however despite being practical the tool has limited scrollback and its _Scroll to the end_ cannot be paused.
 Theferore if one wish to look back at some output line, the first problem is that this line may already be out of the 100-lines scrollback limit, and even it is not, every new received message will make the terminal jump to the end.
 
-This script connects to the  [J-Link RTT Client](https://www.segger.com/products/debug-probes/j-link/technology/about-real-time-transfer/#j-link-rtt-client) and outputs the data to the standard console output, which can have any scrollback set and can be (un)paused with right-clicking.
+This script outputs the data to the standard console output, which can have any scrollback set and can be (un)paused with right-clicking.
 
+**Note**: Above mentioned _J-Link RTT Viewer_ **must be running** for this script to work (output will not be visible in _RTT Viewer_ as it is automatically redirected when any telnet client connects). One can then use tool such as [RBTray](http://rbtray.sourceforge.net/) to "minimize" the _RTT Viewer_ window to the system tray.
+
+Branch [pylink](/bojanpotocnik/segger-rtt-viewer/tree/pylink) removes this requirement with the cost of lower performance.
+
+<br>
 
 More features are pending, first one being colored output, then filtering (Logcat style) using PyQT. 

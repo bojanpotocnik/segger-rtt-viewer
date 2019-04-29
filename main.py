@@ -34,6 +34,12 @@ class SeggerRTTListener(Iterator):
         return self.telnet.get_socket().fileno() != -1
 
 
+def main() -> None:
+    with SeggerRTTListener() as listener:
+        for line in listener:
+            print(line)
+
+
 if __name__ == '__main__':
     if os.name == 'nt':
         # Running on Windows, enable console colors
@@ -43,6 +49,4 @@ if __name__ == '__main__':
         kernel32 = ctypes.windll.kernel32
         kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 0x01 | 0x02 | 0x04)
 
-    with SeggerRTTListener() as listener:
-        for line in listener:
-            print(line)
+    main()

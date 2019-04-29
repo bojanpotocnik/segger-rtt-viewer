@@ -7,3 +7,6 @@ venv/
 
 # PyCharm Plugins
 .idea/libraries/R_User_Library.xml
+
+# Local cache and properties
+.jlink_last_used_device_name
