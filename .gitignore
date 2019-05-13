@@ -4,9 +4,13 @@ venv/
 # PyCharm
 .idea/misc.xml
 .idea/deployment.xml
+.idea/dictionaries/
 
 # PyCharm Plugins
 .idea/libraries/R_User_Library.xml
 
 # Local cache and properties
 .jlink_last_used_device_name
+
+# Other
+RTT Viewer.lnk
