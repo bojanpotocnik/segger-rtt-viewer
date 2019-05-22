@@ -13,4 +13,4 @@ venv/
 .jlink_last_used_device_name
 
 # Other
-RTT Viewer.lnk
+*.lnk

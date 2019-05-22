@@ -51,7 +51,7 @@ class SeggerRTTListener:
             print(f"While decoding {rx_data}: {e}", file=sys.stderr)
             return rx_data.decode('utf-8', errors='replace')
 
-    def __iter__(self) -> typing.Iterator[str]:
+    def read_lines(self) -> typing.Iterator[str]:
         """Read line by line and strip all newline characters (\r\n) at the end."""
         while self.connected:
             # Wait for new line indefinitely, remove newline characters at the end and convert it to string.
@@ -62,6 +62,11 @@ class SeggerRTTListener:
             # Multiple lines can be received.
             for line in rx_data.split("\n"):
                 yield line.strip("\r\n")
+
+    def __iter__(self) -> typing.Iterator[str]:
+        """Read (undetermined) fragments of received data and return it as-is."""
+        while self.connected:
+            yield self.read_blocking()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.telnet.close()
@@ -77,7 +82,7 @@ class SeggerRTTListener:
 def main() -> None:
     with SeggerRTTListener() as listener:
         for line in listener:
-            print(line)
+            print(line, end="")
 
 
 if __name__ == '__main__':
