@@ -1,3 +1,6 @@
+Contributions and pull requests are welcome!
+Due to lack of free time, the development of this project is not as active as I originally intended/wished.
+
 # Python J-Link RTT Viewer
 
 > [SEGGER's Real Time Transfer (RTT)](https://www.segger.com/products/debug-probes/j-link/technology/about-real-time-transfer/) is the new technology for interactive user I/O in embedded applications. It combines the advantages of SWO and semihosting at very high performance.
