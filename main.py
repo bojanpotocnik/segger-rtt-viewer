@@ -14,8 +14,6 @@ class SeggerRTTListener:
         self.telnet = telnetlib.Telnet(timeout=1)  # type: telnetlib.Telnet
         self.host = host
         self.port = port
-
-    def __enter__(self):
         try:
             self.telnet.open(self.host, self.port)
         except ConnectionRefusedError:
@@ -27,9 +25,8 @@ class SeggerRTTListener:
             )
         # Bold green
         print("\x1B[1m\x1B[32m"
-              f"{type(self).__name__} connected to {self.telnet.host}:{self.telnet.port}."
-              "\x1B[0m")
-        return self
+            f"{type(self).__name__} connected to {self.telnet.host}:{self.telnet.port}."
+            "\x1B[0m")
 
     def read_blocking(self) -> str:
         """Read any available data and return it as-is."""
@@ -63,12 +60,17 @@ class SeggerRTTListener:
             for line in rx_data.split("\n"):
                 yield line.strip("\r\n")
 
+    def write_line(self, buffer) -> None:
+        self.telnet.write(buffer + b"\n")
+
     def __iter__(self) -> typing.Iterator[str]:
         """Read (undetermined) fragments of received data and return it as-is."""
         while self.connected:
             yield self.read_blocking()
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __del__(self):
+        print("{}Connection to {}:{} closed{}".format("\x1B[1m\x1B[32m",
+              self.telnet.host, self.telnet.port, "\x1B[0m"))
         self.telnet.close()
 
     @property
@@ -78,12 +80,25 @@ class SeggerRTTListener:
     def __bool__(self) -> bool:
         return self.connected
 
+def read(client):
+    """ read only one once instead of using generator forever"""
+    print(next(iter(client)), end="")
 
 def main() -> None:
-    with SeggerRTTListener() as listener:
-        for line in listener:
-            print(line, end="")
+    """ main to demonstrate bi-directional (read and write) over Telnet to SEGGER J-Link RTT server
+        write_line can be used on platforms which support bi-directional RTT transfer, e.g. Nordic CLI.
+    """
+    client = SeggerRTTListener()
+    user_input_sent = False
 
+    try:
+        while(True):
+            read(client)
+            if not user_input_sent: # sent input only once and continue reading
+                client.write_line(b"\t") # tab on Nordic RTT CLI shows available commands
+                user_input_sent = True
+    except KeyboardInterrupt:
+        print("User requested keyboard interrupt")
 
 if __name__ == '__main__':
     if os.name == 'nt':
