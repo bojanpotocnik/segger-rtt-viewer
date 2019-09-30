@@ -1,6 +1,8 @@
+import re
 import sys
 import time
 import typing
+import warnings
 
 __author__ = "Bojan Potočnik"
 
@@ -9,14 +11,15 @@ import os
 import telnetlib
 
 
-class SeggerRTTListener:
+class SeggerRTTClient:
     def __init__(self, host: str = "localhost", port: int = 19021):
         self.telnet = telnetlib.Telnet(timeout=1)  # type: telnetlib.Telnet
         self.host = host
         self.port = port
         self._opened = False
 
-    def open(self):
+    # noinspection SpellCheckingInspection
+    def open(self, parse_jlink_info: bool = True):
         """Connect to the JLink host."""
         try:
             self.telnet.open(self.host, self.port)
@@ -28,10 +31,27 @@ class SeggerRTTListener:
                 ", e.g. 'JLink --Device NRF52840_xxAA -If SWD -AutoConnect 1 -Speed 50000'"
             )
         self._opened = True
+
         # Bold/Bright green
-        print("\x1B[32;1m"
-              f"{type(self).__name__} connected to {self.telnet.host}:{self.telnet.port}."
-              "\x1B[0m", flush=True)
+        msg = "\x1B[32;1m" + f"{type(self).__name__} connected to {self.telnet.host}:{self.telnet.port}"
+        if parse_jlink_info:
+            # Wait for JLink information to be printed.
+            # self.telnet.expect() could be used, but it throws error
+            # `TypeError: cannot use a string pattern on a bytes-like object` because it executes
+            # `m = list[i].search(self.cookedq)` where `self.cookedq` is bytes, not str.
+            # Manual matching is done instead.
+            # 3 newline characters are required for RegEx below to match.
+            data = b''.join(self.telnet.read_until(b'\n', 0.1) for _ in range(3))
+            match = re.match(r"SEGGER J-Link (V[\w.]+) - Real time terminal output\r?\n"
+                             r"SEGGER J-Link ([\w .]+), SN=([\d]+)\r?\n"
+                             r"Process: ([\w.\-]+)\r?\n", data.decode('utf-8')) if data else None
+            if match:
+                data = data[match.span()[1]:]  # Leave only the unused data in the buffer.
+                # Bold/Bright blue
+                msg += "\x1B[34;1m" + f" ('{match[3]}' {match[1]} using {match[2]} (SN {match[3]}))"
+            # Put unrecognized/unused data back in the buffer (in front of any new data received in meantime).
+            self.telnet.cookedq = data + self.telnet.cookedq
+        print(msg + "\x1B[0m", flush=True)
 
     def close(self):
         """Close the connection, if opened."""
@@ -56,11 +76,12 @@ class SeggerRTTListener:
             try:
                 rx_data = self.telnet.read_very_eager()
             except ConnectionResetError:
-                self.telnet.close()
                 # Bold red
-                return ("\x1B[1m\x1B[31m"
-                        f"{type(self).__name__} disconnected from {self.host}:{self.port}."
-                        "\x1B[0m")
+                print("\x1B[31;1m"
+                      f"{type(self).__name__} disconnected from {self.host}:{self.port}."
+                      "\x1B[0m")
+                self.close()
+                return "\x00"
             if rx_data:
                 break
             time.sleep(0.01)
@@ -103,6 +124,14 @@ class SeggerRTTListener:
         return self.connected
 
 
+class SeggerRTTListener(SeggerRTTClient):
+    """Class for backward compatibility of the @ref SeggerRTTClient."""
+
+    def __init__(self, host: str = "localhost", port: int = 19021):
+        warnings.warn(f"{type(self).__name__} is deprecated - use {SeggerRTTClient.__name__} instead.")
+        super().__init__(host, port)
+
+
 def read(client):
     """ read only one once instead of using generator forever"""
     print(next(iter(client)), end="")
@@ -112,7 +141,7 @@ def main__open_close() -> None:
     """ main to demonstrate bi-directional (read and write) over Telnet to SEGGER J-Link RTT server
         write_line can be used on platforms which support bi-directional RTT transfer, e.g. Nordic CLI.
     """
-    client = SeggerRTTListener()
+    client = SeggerRTTClient()
     client.open()
     user_input_sent = False
 
@@ -134,7 +163,7 @@ def main__open_close() -> None:
 def main__context_manager() -> None:
     user_input_sent = False
 
-    with SeggerRTTListener() as client:
+    with SeggerRTTClient() as client:
         for line in client:
             print(line, end="")
             if not user_input_sent:  # Sent input only once and continue reading
