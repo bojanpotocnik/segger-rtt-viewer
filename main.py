@@ -14,22 +14,41 @@ class SeggerRTTListener:
         self.telnet = telnetlib.Telnet(timeout=1)  # type: telnetlib.Telnet
         self.host = host
         self.port = port
+        self._opened = False
 
-    def __enter__(self):
+    def open(self):
+        """Connect to the JLink host."""
         try:
             self.telnet.open(self.host, self.port)
         except ConnectionRefusedError:
             raise ConnectionRefusedError(
                 f"Could not connect to {self.host}:{self.port}."
-                f" Are you sure that the JLink is running?"
-                f" You can run it with 'JLink -Device <DEVICE> -If <IF> -AutoConnect 1 -Speed <kHz>'"
-                f", e.g. 'JLink --Device NRF52840_xxAA -If SWD -AutoConnect 1 -Speed 50000'"
+                " Are you sure that the JLink is running?"
+                " You can run it with 'JLink -Device <DEVICE> -If <IF> -AutoConnect 1 -Speed <kHz>'"
+                ", e.g. 'JLink --Device NRF52840_xxAA -If SWD -AutoConnect 1 -Speed 50000'"
             )
-        # Bold green
-        print("\x1B[1m\x1B[32m"
+        self._opened = True
+        # Bold/Bright green
+        print("\x1B[32;1m"
               f"{type(self).__name__} connected to {self.telnet.host}:{self.telnet.port}."
-              "\x1B[0m")
+              "\x1B[0m", flush=True)
+
+    def close(self):
+        """Close the connection, if opened."""
+        if self._opened:
+            self.telnet.close()
+            self._opened = False
+            # Bold/Bright magenta
+            print("\x1B[35;1m"
+                  f"Connection to {self.telnet.host}:{self.telnet.port} closed."
+                  "\x1B[0m", flush=True)
+
+    def __enter__(self):
+        self.open()
         return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def read_blocking(self) -> str:
         """Read any available data and return it as-is."""
@@ -63,13 +82,18 @@ class SeggerRTTListener:
             for line in rx_data.split("\n"):
                 yield line.strip("\r\n")
 
+    def write_line(self, buffer: typing.Union[bytes, str]) -> None:
+        if isinstance(buffer, str):
+            buffer = buffer.encode('ascii')
+        self.telnet.write(buffer + b"\n")
+
     def __iter__(self) -> typing.Iterator[str]:
         """Read (undetermined) fragments of received data and return it as-is."""
         while self.connected:
             yield self.read_blocking()
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.telnet.close()
+    def __del__(self):
+        self.close()
 
     @property
     def connected(self) -> bool:
@@ -79,10 +103,43 @@ class SeggerRTTListener:
         return self.connected
 
 
-def main() -> None:
-    with SeggerRTTListener() as listener:
-        for line in listener:
+def read(client):
+    """ read only one once instead of using generator forever"""
+    print(next(iter(client)), end="")
+
+
+def main__open_close() -> None:
+    """ main to demonstrate bi-directional (read and write) over Telnet to SEGGER J-Link RTT server
+        write_line can be used on platforms which support bi-directional RTT transfer, e.g. Nordic CLI.
+    """
+    client = SeggerRTTListener()
+    client.open()
+    user_input_sent = False
+
+    try:
+        while True:
+            read(client)
+            if not user_input_sent:  # sent input only once and continue reading
+                client.write_line(b"\t")  # tab on Nordic RTT CLI shows available commands
+                user_input_sent = True
+    except KeyboardInterrupt:
+        print("User requested keyboard interrupt")
+    finally:
+        # In this case calling close() is not strictly required as it will be called
+        # automatically when the object is garbage collected, however this shall not be
+        # relied upon - open()-ed resources shall always be close()-ed.
+        client.close()
+
+
+def main__context_manager() -> None:
+    user_input_sent = False
+
+    with SeggerRTTListener() as client:
+        for line in client:
             print(line, end="")
+            if not user_input_sent:  # Sent input only once and continue reading
+                client.write_line(b"\t")  # Tab on Nordic RTT CLI shows available commands
+                user_input_sent = True
 
 
 if __name__ == '__main__':
@@ -94,4 +151,5 @@ if __name__ == '__main__':
         kernel32 = ctypes.windll.kernel32
         kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 0x01 | 0x02 | 0x04)
 
-    main()
+    main__context_manager()
+    # main__open_close()
