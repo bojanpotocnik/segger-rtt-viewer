@@ -156,11 +156,8 @@ class SeggerRTTListener(Iterator):
         """Read line, blocking mode"""
         if not self.connected:
             return StopIteration
-        # Wait for new line indefinitely, remove newline characters at the end and convert it to string
-        rx_data = self.read_blocking()
-        for line in rx_data.split("\n"):
-            # Sometimes lines end with "\r\n", sometimes with "\n" only.
-            return line.rstrip()
+        # Wait for new data block indefinitely
+        return self.read_blocking()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
@@ -176,8 +173,8 @@ class SeggerRTTListener(Iterator):
 
 def main() -> None:
     with SeggerRTTListener() as listener:
-        for line in listener:
-            print(line)
+        for data_block in listener:
+            print(data_block, end = '')
 
 
 if __name__ == '__main__':
